@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import Optional, List
 from enum import Enum
+from app.core.logging_config import logger
 
 router = APIRouter()
 
@@ -22,13 +23,19 @@ class ProgressCreate(BaseModel):
     is_correct: bool
 
 class ProgressResponse(BaseModel):
-    id: int
+    id: str  # Changed from int to str since it's a UUID
     user_id: str
     question_id: int
     selected_answer: str
     is_correct: bool
     time_taken: int
     attempted_at: datetime
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 class TopicProgress(BaseModel):
     topic: str
@@ -44,10 +51,38 @@ async def record_attempt(
     supabase: Client = Depends(get_supabase)
 ):
     try:
-        data = {"user_id": current_user.id, **progress.dict()}
+        # Prepare data with the correct user_id
+        data = {
+            "user_id": str(current_user.id),  # Ensure user_id is string
+            "question_id": progress.question_id,
+            "selected_answer": progress.selected_answer,
+            "time_taken": progress.time_taken,
+            "is_correct": progress.is_correct,
+            "attempted_at": datetime.now().isoformat()  # Add timestamp
+        }
+
+        # Insert data and handle response
         response = supabase.table("user_progress").insert(data).execute()
-        return response.data[0]
+
+        if not response.data or not len(response.data):
+            raise HTTPException(status_code=400, detail="Failed to record attempt")
+
+        # Return the first record from the response
+        attempt_record = response.data[0]
+
+        # Convert the response to match ProgressResponse model
+        return {
+            "id": attempt_record.get('id'),
+            "user_id": attempt_record.get('user_id'),
+            "question_id": attempt_record.get('question_id'),
+            "selected_answer": attempt_record.get('selected_answer'),
+            "is_correct": attempt_record.get('is_correct'),
+            "time_taken": attempt_record.get('time_taken'),
+            "attempted_at": attempt_record.get('attempted_at')
+        }
+
     except Exception as e:
+        logger.error(f"Error recording attempt: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/stats", response_model=dict)
@@ -88,33 +123,54 @@ async def get_topic_progress(
 ):
     """Get progress statistics by topic"""
     try:
-        # Join progress with questions to get topic information
-        query = """
-        SELECT
-            q.topic,
-            COUNT(*) as total_attempts,
-            SUM(CASE WHEN p.is_correct THEN 1 ELSE 0 END) as correct_attempts,
-            AVG(p.time_taken) as average_time
-        FROM user_progress p
-        JOIN TMUA q ON p.question_id = q.ques_number
-        WHERE p.user_id = ?
-        GROUP BY q.topic
-        """
-        response = supabase.table("user_progress").select("*").execute()
+        # First get all user attempts
+        progress_data = supabase.table("user_progress")\
+            .select("*")\
+            .eq("user_id", str(current_user.id))\
+            .execute()
+        # Then get questions data
+        questions_data = supabase.table("TMUA")\
+            .select("ques_number, topic")\
+            .execute()
+        # Create a mapping of question_id to topic
+        question_topics = {q['ques_number']: q['topic'] for q in questions_data.data}
 
-        topic_stats = []
-        for row in response.data:
-            accuracy = (row['correct_attempts'] / row['total_attempts'] * 100) if row['total_attempts'] else 0
-            topic_stats.append(TopicProgress(
-                topic=row['topic'],
-                total_attempts=row['total_attempts'],
-                correct_attempts=row['correct_attempts'],
-                accuracy=accuracy,
-                average_time=row['average_time']
+        # Process data to group by topic
+        topic_stats = {}
+        for attempt in progress_data.data:
+            topic = question_topics.get(attempt['question_id'])
+            if topic:
+                if topic not in topic_stats:
+                    topic_stats[topic] = {
+                        'total_attempts': 0,
+                        'correct_attempts': 0,
+                        'total_time': 0
+                    }
+
+                stats = topic_stats[topic]
+                stats['total_attempts'] += 1
+                if attempt['is_correct']:
+                    stats['correct_attempts'] += 1
+                stats['total_time'] += attempt['time_taken']
+
+        # Convert to list of TopicProgress objects
+        result = []
+        for topic, stats in topic_stats.items():
+            accuracy = (stats['correct_attempts'] / stats['total_attempts'] * 100) if stats['total_attempts'] > 0 else 0
+            average_time = stats['total_time'] / stats['total_attempts'] if stats['total_attempts'] > 0 else 0
+
+            result.append(TopicProgress(
+                topic=topic,
+                total_attempts=stats['total_attempts'],
+                correct_attempts=stats['correct_attempts'],
+                accuracy=round(accuracy, 2),
+                average_time=round(average_time, 2)
             ))
 
-        return topic_stats
+        return result
+
     except Exception as e:
+        logger.error(f"Error fetching topic progress: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/recent-attempts", response_model=List[ProgressResponse])
