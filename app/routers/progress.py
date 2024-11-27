@@ -1,4 +1,3 @@
-# backend/app/routers/progress.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from app.db import get_supabase
 from app.core.auth import get_current_user
@@ -192,7 +191,7 @@ async def get_difficulty_progress(
         GROUP BY q.difficulty
         """
         response = supabase.table("user_progress").select("*").execute()
-        
+
         difficulty_stats = {}
         for row in response.data:
             difficulty = row['difficulty']
