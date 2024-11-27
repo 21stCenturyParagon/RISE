@@ -11,8 +11,10 @@ from datetime import datetime
 LOGS_DIR = Path("logs")
 LOGS_DIR.mkdir(exist_ok=True)
 
+
 class LogConfig(BaseModel):
     """Logging configuration"""
+
     LOGGER_NAME: str = "tmua_api"
     LOG_FORMAT: str = "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>"
     LOG_LEVEL: str = "DEBUG"
@@ -21,6 +23,7 @@ class LogConfig(BaseModel):
     LOG_FILE_DEBUG: str = str(LOGS_DIR / "debug.log")
     LOG_FILE_ERROR: str = str(LOGS_DIR / "error.log")
     LOG_FILE_INFO: str = str(LOGS_DIR / "info.log")
+
 
 class InterceptHandler(logging.Handler):
     def emit(self, record):
@@ -40,6 +43,7 @@ class InterceptHandler(logging.Handler):
             level, record.getMessage()
         )
 
+
 def setup_logging():
     """Set up logging configuration"""
     # Remove default handlers
@@ -53,7 +57,7 @@ def setup_logging():
         retention="1 week",
         format=LogConfig().LOG_FORMAT,
         level="DEBUG",
-        compression="zip"
+        compression="zip",
     )
 
     # Info logs - Contains info and above
@@ -64,7 +68,8 @@ def setup_logging():
         format=LogConfig().LOG_FORMAT,
         level="INFO",
         compression="zip",
-        filter=lambda record: record["level"].name in ["INFO", "WARNING", "ERROR", "CRITICAL"]
+        filter=lambda record: record["level"].name
+        in ["INFO", "WARNING", "ERROR", "CRITICAL"],
     )
 
     # Error logs - Contains only error and critical
@@ -75,16 +80,11 @@ def setup_logging():
         format=LogConfig().LOG_FORMAT,
         level="ERROR",
         compression="zip",
-        filter=lambda record: record["level"].name in ["ERROR", "CRITICAL"]
+        filter=lambda record: record["level"].name in ["ERROR", "CRITICAL"],
     )
 
     # Console output
-    logger.add(
-        sys.stdout,
-        format=LogConfig().LOG_FORMAT,
-        level="INFO",
-        colorize=True
-    )
+    logger.add(sys.stdout, format=LogConfig().LOG_FORMAT, level="INFO", colorize=True)
 
     # Intercept standard logging
     logging.basicConfig(handlers=[InterceptHandler()], level=0)
@@ -96,6 +96,7 @@ def setup_logging():
 
     return logger
 
+
 # Custom JSON formatter for structured logging
 class JsonFormatter:
     def __init__(self, keywords):
@@ -103,8 +104,11 @@ class JsonFormatter:
 
     @staticmethod
     def format(record):
-        json_record = {"timestamp": datetime.utcnow().isoformat(), "level": record["level"].name,
-                       "message": record["message"]}
+        json_record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": record["level"].name,
+            "message": record["message"],
+        }
 
         # Add extra fields if they exist
         if record["extra"]:
@@ -117,6 +121,7 @@ class JsonFormatter:
 
         return json.dumps(json_record)
 
+
 # Create a context manager for operation logging
 class OperationLogger:
     def __init__(self, operation_name: str, **kwargs):
@@ -127,7 +132,7 @@ class OperationLogger:
         logger.info(
             f"Starting operation: {self.operation_name}",
             operation=self.operation_name,
-            **self.extra
+            **self.extra,
         )
         return self
 
@@ -137,11 +142,11 @@ class OperationLogger:
                 f"Operation failed: {self.operation_name}",
                 operation=self.operation_name,
                 error=str(exc_val),
-                **self.extra
+                **self.extra,
             )
         else:
             logger.info(
                 f"Operation completed: {self.operation_name}",
                 operation=self.operation_name,
-                **self.extra
+                **self.extra,
             )

@@ -1,6 +1,8 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from app.core.auth import get_current_user, get_optional_user
+
 
 class QuestionBase(BaseModel):
     ques_number: int
@@ -15,8 +17,10 @@ class QuestionBase(BaseModel):
     image: Optional[str] = None
     solution_image: Optional[str] = None
 
+
 class QuestionCreate(QuestionBase):
     pass
+
 
 class QuestionResponse(QuestionBase):
     created_at: datetime
