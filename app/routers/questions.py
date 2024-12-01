@@ -6,7 +6,7 @@ import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from supabase import Client
 
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, check_roles, UserRole
 from app.core.logging_config import logger, OperationLogger
 from app.db import get_supabase
 from app.schemas.pagination import PaginatedResponse
@@ -164,7 +164,7 @@ async def search_questions(
 
 @router.get("/stats")
 async def get_questions_stats(
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(check_roles([UserRole.ADMIN, UserRole.TEACHER])),
     supabase: Client = Depends(get_supabase),
 ):
     """Get statistics about the questions database"""
@@ -219,10 +219,10 @@ async def get_question(
 @router.post("/import")
 async def import_questions(
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(check_roles([UserRole.ADMIN])),
     supabase: Client = Depends(get_supabase),
 ):
-    with OperationLogger("import_questions", filename=file.filename) as op_logger:
+    with OperationLogger("import_questions", filename=file.filename):
         if not file.filename.endswith((".xls", ".xlsx")):
             logger.warning(f"Invalid file format attempted: {file.filename}")
             raise HTTPException(

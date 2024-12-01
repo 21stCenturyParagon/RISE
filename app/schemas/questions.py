@@ -1,7 +1,6 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from app.core.auth import get_current_user, get_optional_user
 
 
 class QuestionBase(BaseModel):

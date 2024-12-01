@@ -11,6 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = setup_logging()
 
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable):
         start_time = time.time()
@@ -35,6 +36,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     url=str(request.url),
                 )
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting application")
@@ -43,19 +45,18 @@ async def lifespan(app: FastAPI):
     finally:
         logger.info("Shutting down application")
 
+
 # Create the root app
 app = FastAPI(
     title="TMUA Guide API",
     description="TMUA Guide API",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 # Create v1 sub-application
 v1 = FastAPI(
-    title="TMUA Guide API",
-    description="Version 1 of TMUA Guide API",
-    version="1.0.0"
+    title="TMUA Guide API", description="Version 1 of TMUA Guide API", version="1.0.0"
 )
 
 # Add middleware to v1
@@ -87,6 +88,7 @@ v1.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 v1.include_router(questions.router, prefix="/questions", tags=["Questions"])
 v1.include_router(progress.router, prefix="/progress", tags=["Progress"])
 
+
 # Exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -98,6 +100,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
+
 @v1.exception_handler(Exception)
 async def v1_global_exception_handler(request: Request, exc: Exception):
     logger.error(
@@ -107,6 +110,7 @@ async def v1_global_exception_handler(request: Request, exc: Exception):
         method=request.method,
     )
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 # Health check endpoints
 @app.get("/health")
