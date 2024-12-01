@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
-from app.routers import questions, auth, progress
+from app.routers import questions, auth, progress, admin
 from app.core.logging_config import setup_logging, OperationLogger
 import time
 from typing import Callable
@@ -87,6 +87,7 @@ app.add_middleware(
 v1.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 v1.include_router(questions.router, prefix="/questions", tags=["Questions"])
 v1.include_router(progress.router, prefix="/progress", tags=["Progress"])
+v1.include_router(admin.router, prefix="/admin", tags=["Admin"])
 
 
 # Exception handler
