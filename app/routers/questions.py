@@ -197,25 +197,6 @@ async def get_questions_stats(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/{ques_number}", response_model=QuestionResponse)
-async def get_question(
-    ques_number: int,
-    current_user: dict = Depends(get_current_user),
-    supabase: Client = Depends(get_supabase),
-):
-    try:
-        response = (
-            supabase.table("TMUA").select("*").eq("ques_number", ques_number).execute()
-        )
-        if not response.data:
-            raise HTTPException(status_code=404, detail="Question not found")
-        logger.info(f"Successfully fetched question {ques_number}")
-        return response.data[0]
-    except Exception as e:
-        logger.error(f"Error fetching question {ques_number}: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-
 @router.post("/import")
 async def import_questions(
     file: UploadFile = File(...),
@@ -402,7 +383,8 @@ async def generate_practice_set(
 
 
 @router.get("/topics", response_model=List[str])
-async def get_topics(supabase: Client = Depends(get_supabase)):
+async def get_topics(supabase: Client = Depends(get_supabase),
+                     current_user: dict = Depends(get_current_user)):
     try:
         response = supabase.table("TMUA").select("topic").execute()
         topics = list(set(item["topic"] for item in response.data))
@@ -411,11 +393,34 @@ async def get_topics(supabase: Client = Depends(get_supabase)):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/sources", response_model=List[str])
-async def get_sources(supabase: Client = Depends(get_supabase)):
+@router.get("/sources")
+async def get_sources(
+        current_user: dict = Depends(get_current_user),
+        supabase: Client = Depends(get_supabase)
+):
     try:
         response = supabase.table("TMUA").select("source").execute()
         sources = list(set(item["source"] for item in response.data))
         return sorted(sources)
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
+@router.get("/{ques_number}", response_model=QuestionResponse)
+async def get_question(
+    ques_number: int,
+    current_user: dict = Depends(get_current_user),
+    supabase: Client = Depends(get_supabase),
+):
+    try:
+        response = (
+            supabase.table("TMUA").select("*").eq("ques_number", ques_number).execute()
+        )
+        if not response.data:
+            raise HTTPException(status_code=404, detail="Question not found")
+        logger.info(f"Successfully fetched question {ques_number}")
+        return response.data[0]
+    except Exception as e:
+        logger.error(f"Error fetching question {ques_number}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
