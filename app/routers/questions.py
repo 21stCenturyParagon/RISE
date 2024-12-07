@@ -1,13 +1,15 @@
-# questions.py
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
+import math
 from app.db import get_supabase
 from app.core.auth import get_current_user
 from supabase import Client
+from app.schemas.pagination import PaginatedResponse
 from pydantic import BaseModel
 
 router = APIRouter()
 
+# First, let's define our question model
 class QuestionResponse(BaseModel):
     ques_number: int
     question: str
@@ -16,18 +18,35 @@ class QuestionResponse(BaseModel):
     difficulty: str
     source: str
     image: Optional[str]
+    status: Optional[str]  # For tracking attempt status
 
-@router.get("/")
+@router.get("/", response_model=PaginatedResponse[QuestionResponse])
 async def get_questions(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(10, ge=1, le=50, description="Questions per page"),
     difficulty: Optional[str] = None,
     topic: Optional[str] = None,
     source: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    """Get questions with filters as shown in the study plan"""
+    """
+    Get paginated questions with filters and attempt status.
+    The function does the following:
+    1. Applies any filters (difficulty, topic, source)
+    2. Gets total count for pagination calculations
+    3. Gets the specific page of questions requested
+    4. Adds attempt status to each question
+    5. Returns a paginated response with all necessary metadata
+    """
     try:
-        query = supabase.table("TMUA").select("*")
+        # Calculate offset for pagination
+        offset = (page - 1) * size
+
+        # Start building our query
+        query = supabase.table("TMUA").select("*", count="exact")
+
+        # Apply filters if provided
         if difficulty:
             query = query.eq("difficulty", difficulty)
         if topic:
@@ -35,23 +54,55 @@ async def get_questions(
         if source:
             query = query.eq("source", source)
 
-        response = query.execute()
+        # First get total count for pagination
+        total_result = query.execute()
+        total_count = total_result.count if hasattr(total_result, "count") else 0
 
-        # Get user's attempts to mark status
+        # Then get the specific page of questions
+        query = query.range(offset, offset + size - 1).order("ques_number")
+        questions_result = query.execute()
+
+        # Get user's attempts to mark question status
         attempts = supabase.table("user_progress")\
             .select("question_id, is_correct")\
             .eq("user_id", current_user.id)\
             .execute()
 
-        attempt_lookup = {a["question_id"]: a["is_correct"] for a in attempts.data}
+        # Create a lookup for quick status checking
+        attempt_lookup = {
+            a["question_id"]: "correct" if a["is_correct"] else "incorrect"
+            for a in attempts.data
+        }
 
-        # Add status to questions
-        for q in response.data:
-            q["status"] = "correct" if attempt_lookup.get(q["ques_number"]) else \
-                         "incorrect" if q["ques_number"] in attempt_lookup else \
-                         "unattempted"
+        # Add attempt status to each question
+        questions_with_status = []
+        for question in questions_result.data:
+            question_data = dict(question)
+            question_data["status"] = attempt_lookup.get(
+                question["ques_number"], "unattempted"
+            )
+            questions_with_status.append(question_data)
 
-        return response.data
+        # Calculate pagination metadata
+        total_pages = math.ceil(total_count / size)
+        has_next = page < total_pages
+        has_previous = page > 1
+
+        # Construct the paginated response
+        response = PaginatedResponse(
+            items=questions_with_status,
+            total=total_count,
+            page=page,
+            size=size,
+            total_pages=total_pages,
+            has_next=has_next,
+            has_previous=has_previous,
+            next_page=page + 1 if has_next else None,
+            previous_page=page - 1 if has_previous else None
+        )
+
+        return response
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
