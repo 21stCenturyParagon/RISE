@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Optional, List
+from enum import Enum
 import math
 from app.db import get_supabase
 from app.core.auth import get_current_user
@@ -9,7 +10,12 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-# First, let's define our question model
+# Let's first define an enum for valid status values to ensure type safety
+class QuestionStatus(str, Enum):
+    CORRECT = "correct"
+    INCORRECT = "incorrect"
+    UNATTEMPTED = "unattempted"
+
 class QuestionResponse(BaseModel):
     ques_number: int
     question: str
@@ -18,7 +24,7 @@ class QuestionResponse(BaseModel):
     difficulty: str
     source: str
     image: Optional[str]
-    status: Optional[str]  # For tracking attempt status
+    status: QuestionStatus
 
 @router.get("/", response_model=PaginatedResponse[QuestionResponse])
 async def get_questions(
@@ -27,26 +33,39 @@ async def get_questions(
     difficulty: Optional[str] = None,
     topic: Optional[str] = None,
     source: Optional[str] = None,
+    status: Optional[QuestionStatus] = None,  # New status filter
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
     """
-    Get paginated questions with filters and attempt status.
-    The function does the following:
-    1. Applies any filters (difficulty, topic, source)
-    2. Gets total count for pagination calculations
-    3. Gets the specific page of questions requested
-    4. Adds attempt status to each question
-    5. Returns a paginated response with all necessary metadata
+    Get paginated questions with filters including attempt status.
+    The status filter allows viewing only questions that are:
+    - correct: successfully answered questions
+    - incorrect: attempted but wrong answers
+    - unattempted: questions not yet tried
     """
     try:
-        # Calculate offset for pagination
-        offset = (page - 1) * size
+        # First, get user's attempts to help with status filtering
+        attempts = supabase.table("user_progress")\
+            .select("question_id, is_correct")\
+            .eq("user_id", current_user.id)\
+            .execute()
+
+        # Create attempt lookup dictionary
+        attempt_lookup = {
+            a["question_id"]: "correct" if a["is_correct"] else "incorrect"
+            for a in attempts.data
+        }
+
+        # Get all question IDs the user has attempted
+        attempted_ids = list(attempt_lookup.keys())
+        correct_ids = [qid for qid, status in attempt_lookup.items() if status == "correct"]
+        incorrect_ids = [qid for qid, status in attempt_lookup.items() if status == "incorrect"]
 
         # Start building our query
         query = supabase.table("TMUA").select("*", count="exact")
 
-        # Apply filters if provided
+        # Apply basic filters
         if difficulty:
             query = query.eq("difficulty", difficulty)
         if topic:
@@ -54,27 +73,27 @@ async def get_questions(
         if source:
             query = query.eq("source", source)
 
-        # First get total count for pagination
+        # Apply status filter
+        if status:
+            if status == QuestionStatus.CORRECT:
+                query = query.in_("ques_number", correct_ids)
+            elif status == QuestionStatus.INCORRECT:
+                query = query.in_("ques_number", incorrect_ids)
+            elif status == QuestionStatus.UNATTEMPTED:
+                query = query.not_.in_("ques_number", attempted_ids)
+
+        # Calculate offset for pagination
+        offset = (page - 1) * size
+
+        # Get total count for pagination
         total_result = query.execute()
         total_count = total_result.count if hasattr(total_result, "count") else 0
 
-        # Then get the specific page of questions
+        # Get the specific page of questions
         query = query.range(offset, offset + size - 1).order("ques_number")
         questions_result = query.execute()
 
-        # Get user's attempts to mark question status
-        attempts = supabase.table("user_progress")\
-            .select("question_id, is_correct")\
-            .eq("user_id", current_user.id)\
-            .execute()
-
-        # Create a lookup for quick status checking
-        attempt_lookup = {
-            a["question_id"]: "correct" if a["is_correct"] else "incorrect"
-            for a in attempts.data
-        }
-
-        # Add attempt status to each question
+        # Add status to each question
         questions_with_status = []
         for question in questions_result.data:
             question_data = dict(question)
