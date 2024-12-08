@@ -33,36 +33,33 @@ async def get_questions(
     difficulty: Optional[str] = None,
     topic: Optional[str] = None,
     source: Optional[str] = None,
-    status: Optional[QuestionStatus] = None,  # New status filter
+    # Accept multiple status values
+    status: List[QuestionStatus] = Query(None, description="Filter by multiple statuses"),
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
     """
-    Get paginated questions with filters including attempt status.
-    The status filter allows viewing only questions that are:
-    - correct: successfully answered questions
-    - incorrect: attempted but wrong answers
-    - unattempted: questions not yet tried
+    Get paginated questions with filters including multiple statuses.
+    Example: status=correct&status=incorrect will show both correct and incorrect attempts.
     """
     try:
-        # First, get user's attempts to help with status filtering
+        # Get user's attempts
         attempts = supabase.table("user_progress")\
             .select("question_id, is_correct")\
             .eq("user_id", current_user.id)\
             .execute()
 
-        # Create attempt lookup dictionary
+        # Create lookups
         attempt_lookup = {
             a["question_id"]: "correct" if a["is_correct"] else "incorrect"
             for a in attempts.data
         }
 
-        # Get all question IDs the user has attempted
         attempted_ids = list(attempt_lookup.keys())
-        correct_ids = [qid for qid, status in attempt_lookup.items() if status == "correct"]
-        incorrect_ids = [qid for qid, status in attempt_lookup.items() if status == "incorrect"]
+        correct_ids = [qid for qid, stat in attempt_lookup.items() if stat == "correct"]
+        incorrect_ids = [qid for qid, stat in attempt_lookup.items() if stat == "incorrect"]
 
-        # Start building our query
+        # Build query
         query = supabase.table("TMUA").select("*", count="exact")
 
         # Apply basic filters
@@ -73,27 +70,46 @@ async def get_questions(
         if source:
             query = query.eq("source", source)
 
-        # Apply status filter
+        # Apply status filters if provided
         if status:
-            if status == QuestionStatus.CORRECT:
-                query = query.in_("ques_number", correct_ids)
-            elif status == QuestionStatus.INCORRECT:
-                query = query.in_("ques_number", incorrect_ids)
-            elif status == QuestionStatus.UNATTEMPTED:
-                query = query.not_.in_("ques_number", attempted_ids)
+            filter_ids = set()
 
-        # Calculate offset for pagination
+            # Collect all question IDs that match any of the requested statuses
+            for stat in status:
+                if stat == QuestionStatus.CORRECT:
+                    filter_ids.update(correct_ids)
+                elif stat == QuestionStatus.INCORRECT:
+                    filter_ids.update(incorrect_ids)
+                elif stat == QuestionStatus.UNATTEMPTED:
+                    # For unattempted, we need to handle it differently
+                    # We'll apply it after getting the questions
+                    continue
+
+            # If unattempted is one of the statuses, we need to include questions
+            # that aren't in attempted_ids
+            if QuestionStatus.UNATTEMPTED in status:
+                if filter_ids:
+                    # If we have other statuses, we need to use OR condition
+                    query = query.or_(f'ques_number.in.({",".join(map(str, filter_ids))}),ques_number.not.in.({",".join(map(str, attempted_ids))})')
+                else:
+                    # If only unattempted is requested
+                    query = query.not_.in_("ques_number", attempted_ids)
+            elif filter_ids:
+                # If we only have correct/incorrect statuses
+                query = query.in_("ques_number", list(filter_ids))
+
+        # Calculate pagination
         offset = (page - 1) * size
 
-        # Get total count for pagination
+        # Get total count
         total_result = query.execute()
         total_count = total_result.count if hasattr(total_result, "count") else 0
 
-        # Get the specific page of questions
+        # Get page of questions
         query = query.range(offset, offset + size - 1).order("ques_number")
         questions_result = query.execute()
 
-        # Add status to each question
+        # Add status to questions
         questions_with_status = []
         for question in questions_result.data:
             question_data = dict(question)
@@ -107,8 +123,7 @@ async def get_questions(
         has_next = page < total_pages
         has_previous = page > 1
 
-        # Construct the paginated response
-        response = PaginatedResponse(
+        return PaginatedResponse(
             items=questions_with_status,
             total=total_count,
             page=page,
@@ -119,9 +134,6 @@ async def get_questions(
             next_page=page + 1 if has_next else None,
             previous_page=page - 1 if has_previous else None
         )
-
-        return response
-
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
