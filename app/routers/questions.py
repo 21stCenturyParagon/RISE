@@ -33,21 +33,30 @@ async def get_questions(
     difficulty: Optional[str] = None,
     topic: Optional[str] = None,
     source: Optional[str] = None,
-    # Accept multiple status values
     status: List[QuestionStatus] = Query(None, description="Filter by multiple statuses"),
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    """
-    Get paginated questions with filters including multiple statuses.
-    Example: status=correct&status=incorrect will show both correct and incorrect attempts.
-    """
     try:
-        # Get user's attempts
+        # Get user's attempts first
         attempts = supabase.table("user_progress")\
             .select("question_id, is_correct")\
             .eq("user_id", current_user.id)\
             .execute()
+
+        # If status includes correct/incorrect but no attempts exist, return empty result
+        if status and (QuestionStatus.CORRECT in status or QuestionStatus.INCORRECT in status) and not attempts.data:
+            return PaginatedResponse(
+                items=[],
+                total=0,
+                page=page,
+                size=size,
+                total_pages=0,
+                has_next=False,
+                has_previous=False,
+                next_page=None,
+                previous_page=None
+            )
 
         # Create lookups
         attempt_lookup = {
@@ -73,43 +82,56 @@ async def get_questions(
         # Apply status filters if provided
         if status:
             filter_ids = set()
+            has_status_filter = False
 
-            # Collect all question IDs that match any of the requested statuses
             for stat in status:
-                if stat == QuestionStatus.CORRECT:
+                if stat == QuestionStatus.CORRECT and correct_ids:
                     filter_ids.update(correct_ids)
-                elif stat == QuestionStatus.INCORRECT:
+                    has_status_filter = True
+                elif stat == QuestionStatus.INCORRECT and incorrect_ids:
                     filter_ids.update(incorrect_ids)
-                elif stat == QuestionStatus.UNATTEMPTED:
-                    # For unattempted, we need to handle it differently
-                    # We'll apply it after getting the questions
-                    continue
+                    has_status_filter = True
 
-            # If unattempted is one of the statuses, we need to include questions
-            # that aren't in attempted_ids
+            # Handle unattempted status
             if QuestionStatus.UNATTEMPTED in status:
                 if filter_ids:
-                    # If we have other statuses, we need to use OR condition
-                    query = query.or_(f'ques_number.in.({",".join(map(str, filter_ids))}),ques_number.not.in.({",".join(map(str, attempted_ids))})')
+                    # Include both filter_ids and unattempted questions
+                    query = query.or_(
+                        f'ques_number.in.({",".join(map(str, filter_ids))}),'
+                        f'ques_number.not.in.({",".join(map(str, attempted_ids))})'
+                    )
                 else:
-                    # If only unattempted is requested
+                    # Only unattempted questions
                     query = query.not_.in_("ques_number", attempted_ids)
-            elif filter_ids:
-                # If we only have correct/incorrect statuses
+            elif has_status_filter:
+                # Only include questions with matching correct/incorrect status
                 query = query.in_("ques_number", list(filter_ids))
 
         # Calculate pagination
         offset = (page - 1) * size
 
-        # Get total count
+        # Get total count and questions
         total_result = query.execute()
         total_count = total_result.count if hasattr(total_result, "count") else 0
+
+        if total_count == 0:
+            return PaginatedResponse(
+                items=[],
+                total=0,
+                page=page,
+                size=size,
+                total_pages=0,
+                has_next=False,
+                has_previous=False,
+                next_page=None,
+                previous_page=None
+            )
 
         # Get page of questions
         query = query.range(offset, offset + size - 1).order("ques_number")
         questions_result = query.execute()
 
-        # Add status to questions
+        # Add status to each question
         questions_with_status = []
         for question in questions_result.data:
             question_data = dict(question)
@@ -134,7 +156,9 @@ async def get_questions(
             next_page=page + 1 if has_next else None,
             previous_page=page - 1 if has_previous else None
         )
+
     except Exception as e:
+        logger.error(f"Error fetching questions: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
 
 
