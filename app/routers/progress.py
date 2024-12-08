@@ -21,15 +21,33 @@ async def record_attempt(
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    """Record a question attempt"""
+    """Record or update a question attempt"""
     try:
+        # Check for existing attempt
+        existing = supabase.table("user_progress")\
+            .select("id")\
+            .eq("user_id", current_user.id)\
+            .eq("question_id", attempt.question_id)\
+            .execute()
+
         data = {
             "user_id": current_user.id,
             **attempt.dict(),
             "attempted_at": datetime.now().isoformat()
         }
 
-        response = supabase.table("user_progress").insert(data).execute()
+        if existing.data:
+            # Update existing attempt
+            response = supabase.table("user_progress")\
+                .update(data)\
+                .eq("id", existing.data[0]["id"])\
+                .execute()
+        else:
+            # Create new attempt
+            response = supabase.table("user_progress")\
+                .insert(data)\
+                .execute()
+
         return response.data[0]
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
